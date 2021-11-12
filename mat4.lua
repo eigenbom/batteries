@@ -72,15 +72,10 @@ function mat4:mset(m)
 	return array.copy(m.data, self.data)
 end
 
---[[
 function mat4:swap(m)
-	local data = tablex.copy(m.data)
-	self:mset(data)
-	m:sset(unpack(data))
+	self.data, m.data = m.data, self.data
 	return self
 end
---]]
-
 
 function mat4:get(row, col)
 	return self.data[index(row,col)]
@@ -142,9 +137,9 @@ end
 
 function mat4:add(m)
 	if type(m) == "number" then
-		return mat4(array.sadd(self.data,m))
+		return mat4(array.sadd(self.data, m))
 	else
-		return mat4(array.add(self.data,m))
+		return mat4(array.add(self.data, m.data))
 	end
 end
 
@@ -152,7 +147,7 @@ function mat4:sub(m)
 	if type(m) == "number" then
 		return mat4(array.ssub(self.data,m))
 	else
-		return mat4(array.sub(self.data,m))
+		return mat4(array.sub(self.data, m.data))
 	end
 end
 
@@ -160,7 +155,7 @@ function mat4:elementwise_mul(m)
 	if type(m) == "number" then
 		return mat4(array.smul(self.data,m))
 	else
-		return mat4(array.mul(self.data,m))
+		return mat4(array.mul(self.data, m.data))
 	end
 end
 
@@ -168,94 +163,38 @@ function mat4:elementwise_div(m)
 	if type(m) == "number" then
 		return mat4(array.sdiv(self.data,m))
 	else
-		return mat4(array.div(self.data,m))
+		return mat4(array.div(self.data, m.data))
 	end
 end
 
 -- Matrix product
 function mat4:mmul(m, into)
 	assert:type(m, "mat4", "mat4.mmuli - m", 1)
-	into = into or mat4()
-	for col=1,4 do
-		for row=1,4 do
-			into:set(row, col, self:get(row,1)*m:get(1,col) + self:get(row,2)*m:get(2,col) + self:get(row,3)*m:get(3,col) + self:get(row,4)*m:get(4,col))
-		end
+	if into then
+		assert:type(into, "mat4", "mat4.mmuli - into", 1)
 	end
-	return into
+	local result = array.matrix_product_mat4_mat4(self.data, m.data, into and into.data)
+	return into or mat4(result)
 end
 
 -- Matrix-Vector product
 function mat4:vmul(v, into)
-	if not into then into = vec3:zero() end
-
 	assert:type(v, "vec3", "mat4.vmul - v", 1)
-	assert:type(into, "vec3", "mat4.vmul - into", 1)
+	if into then
+		assert:type(into, "vec3", "mat4.vmul - into", 1)
+	end
 
-	return into:sset(
-		self.data[1]*v.x + self.data[5]*v.y + self.data[9]*v.z + self.data[13],
-		self.data[2]*v.x + self.data[6]*v.y + self.data[10]*v.z + self.data[14],
-		self.data[3]*v.x + self.data[7]*v.y + self.data[11]*v.z + self.data[15] )
+	local result = array.matrix_product_mat4_vec3(self.data, {v.x, v.y, v.z})
+	return into and into:sset(result[1],result[2],result[3]) or vec3(tablex.unpack3(result))
 end
 
 -----------------------------------------------------------
 --equality comparison
 -----------------------------------------------------------
 
---threshold for equality in each dimension
-local EQUALS_EPSILON = 1e-9
-
 --true if a and b are functionally equivalent
 function mat4.equals(a, b)
-	for i=1,16 do
-		if math.abs(a.data[i] - b.data[i]) > EQUALS_EPSILON then 
-			return false
-		end
-	end
-	return true
-end
-
---true if a and b are not functionally equivalent
-function mat4.nequals(a, b)
-	return not mat4.equals(a,b)
-end
-
------------------------------------------------------------
---linear algebra
------------------------------------------------------------
-
--- Matrix product of two 16-element arrays representing 4x4 column-major matrices
-function mat4.multiply(a, b, into)
-	assert(#a==16)
-	assert(#b==16)
-	-- If into is a or b then need a temporary to store the results
-	local tmp = (a == into or b == into) and {}
-	into = into or mat4()
-	local target = tmp or into
-	for col=1,4 do
-		for row=1,4 do
-			target[index(row,col)] = a[index(row,1)]*b[index(1,col)] + a[index(row,2)]*b[index(2,col)] + a[index(row,3)]*b[index(3,col)] + a[index(row,4)]*b[index(4,col)]
-		end
-	end
-	if tmp then
-		array.copy(target, into)
-		-- free tmp
-	end
-	return into
-end
-
--- Matrix-Vector product
-function mat4.vector_multiply(a, v, into)
-	assert(#a==16)
-	assert(#v==3)
-	local x, y, z =
-		a[1]*v[1] + a[5]*v[2] + a[9]*v[3] + a[13],
-		a[2]*v[1] + a[6]*v[2] + a[10]*v[3] + a[14],
-		a[3]*v[1] + a[7]*v[2] + a[11]*v[3] + a[15]
-	if into then
-		return array.pack(into, x, y, z)
-	else
-		return table.pack(x,y,z)
-	end
+	return array.almost_equals(a.data, b.data)
 end
 
 -----------------------------------------------------------
@@ -294,6 +233,26 @@ function mat4.rotation(axis, angle)
 		0, 0, 0, 1)
 end
 
+-----------------------------------------------------------
+-- operator overloads
+-----------------------------------------------------------
+
+-- Add operators to mat4
+-- NOTE: These are opt-in as they generate garbage like the non-immediate functions
+local function add_operator_overload(mt)
+	mt.__add = mat4.add
+	mt.__mul = function( self, value )
+		if type(value) == "number" then
+			return self:elementwise_mul(value)
+		elseif value:type() == "mat4" then
+			return self:mmul( value )
+		elseif value:type() == "vec3" then
+			return self:vmul( value )
+		else
+			error("unsupported value type " .. type(value))
+		end
+	end
+end
 
 -----------------------------------------------------------
 -- unit tests
@@ -302,22 +261,30 @@ end
 
 function mat4.unit_tests()
 	do
+		-- creation
 		local ident = mat4( 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 )
 		assert(table.concat(ident.data)=="1000010000100001")
 		local sequence = mat4( 1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16 )
 		assert(table.concat(sequence.data)=="12345678910111213141516")
+		ident:swap(sequence)
+		assert(table.concat(ident.data)=="12345678910111213141516")
+		assert(table.concat(sequence.data)=="1000010000100001")
 	end
 
 	do
-		-- Matrix Vector multiplication
+		-- arithmetic
+		local z = mat4:zero()
+		local sequence = mat4( 1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16 )
+		assert(mat4.equals(sequence, z:add(sequence)))
+		assert(mat4.equals(sequence:add(sequence), sequence:elementwise_mul(2)))
+	end
+
+	do
+		-- matrix and vector multiplication
 		local rotate90 = mat4( 0,1,0,0, -1,0,0,0, 0,0,1,0, 0,0,0,1 )
 		assert(vec3.equals(rotate90:vmul(vec3(1,0,0)),vec3(0,1,0)))
 		assert(vec3.equals(rotate90:vmul(vec3(0,1,0)),vec3(-1,0,0)))
-	end
-
-	do
-		-- Matrix multiplication
-		local rotate90 = mat4( 0,1,0,0, -1,0,0,0, 0,0,1,0, 0,0,0,1 )
+		
 		local rotateNeg90 = mat4( 0,-1,0,0, 1,0,0,0, 0,0,1,0, 0,0,0,1 )
 		local transform = rotate90:mmul(rotateNeg90)
 		assert(mat4.equals(transform, mat4:identity()))
@@ -326,12 +293,50 @@ function mat4.unit_tests()
 	do
 		-- Transforms
 		local I = mat4:identity()
+		local Z = mat4:zero()
 		local T = mat4.translation
 		local R = mat4.rotation
 		local S = mat4.scale
 		assert(vec3.equals(T(1,0,0):vmul(vec3:zero()),vec3(1,0,0)))
 		assert(mat4.equals(T(1,0,0):mmul(T(-1,0,0)),I))
 		assert(mat4.equals(R(vec3(0,0,1),math.pi/2), mat4( 0,1,0,0, -1,0,0,0, 0,0,1,0, 0,0,0,1)))
+		assert(vec3.equals(S(2,0,0):vmul(vec3(1,2,3)),vec3(2,0,0)))
+		assert(vec3.equals(S(2,3,4):vmul(vec3(1,2,3)),vec3(2,6,12)))
+		local scale_zero = S(1,0,0):mmul(S(0,1,0))
+		for row=1,4 do 
+			for col=1,4 do
+				local val = row==4 and col==4 and 1 or 0
+				assert(scale_zero:get(row,col)==val)
+			end
+		end
+	end
+
+	do
+		-- operator overloads
+		add_operator_overload(mat4)
+		local z = mat4:zero()
+		local shift_x = mat4.translation(1,0,0)
+		local sum = z + shift_x
+		assert(shift_x ~= sum and mat4.equals(sum, shift_x))
+
+		-- transforms again, but now with * overload
+		local I = mat4:identity()
+		local Z = mat4:zero()
+		local T = mat4.translation
+		local R = mat4.rotation
+		local S = mat4.scale
+		assert(vec3.equals(T(1,0,0) * vec3:zero(), vec3(1,0,0)))
+		assert(mat4.equals(T(1,0,0) * T(-1,0,0), I))
+		assert(mat4.equals(R(vec3(0,0,1),math.pi/2), mat4( 0,1,0,0, -1,0,0,0, 0,0,1,0, 0,0,0,1)))
+		assert(vec3.equals(S(2,0,0) * vec3(1,2,3), vec3(2,0,0)))
+		assert(vec3.equals(S(2,3,4) * vec3(1,2,3), vec3(2,6,12)))
+		local scale_zero = S(1,0,0) * S(0,1,0)
+		for row=1,4 do 
+			for col=1,4 do
+				local val = row==4 and col==4 and 1 or 0
+				assert(scale_zero:get(row,col)==val)
+			end
+		end
 	end
 
 	print("mat4 tests passed")

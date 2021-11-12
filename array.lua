@@ -24,6 +24,14 @@ function array.copy(a, into)
 	return array.copy_range(a, 1, into or {}, 1, #a)
 end
 
+function array.generate(n, f)
+	local tbl = {}
+	for i=1,n do
+		table.insert(tbl, f(i))
+	end
+	return tbl
+end
+
 -----------------------------------------------------------
 -- modification
 -----------------------------------------------------------
@@ -181,6 +189,56 @@ function array.normalise(a, into)
 	return array.sdiv(a, array.length(a), into)
 end
 
+-- TODO: function array.cross_product(a, b)
+
+function array.matrix_product(a, b, into)
+	if #a==16 and #b==16 then
+		return array.matrix_product_mat4_mat4(a, b, into)
+	elseif #a==16 and #b==3 then
+		return array.matrix_product_mat4_vec3(a, b, into)
+	else
+		error(string.format("Unsupported array lengths %d and %d", #a, #b))
+	end
+end
+
+-- Matrix product of two 4x4 matrices flattened in column-major order
+function array.matrix_product_mat4_mat4(a, b, into)
+	assert(#a==16)
+	assert(#b==16)
+	local function index(row, col)
+		return row+(col-1)*4
+	end
+	-- If into is a or b then need a temporary to store the results
+	local tmp = (a == into or b == into) and {}
+	into = into or {}
+	local target = tmp or into
+	for col=1,4 do
+		for row=1,4 do
+			target[index(row,col)] = a[index(row,1)]*b[index(1,col)] + a[index(row,2)]*b[index(2,col)] + a[index(row,3)]*b[index(3,col)] + a[index(row,4)]*b[index(4,col)]
+		end
+	end
+	if tmp then
+		array.copy(target, into)
+		-- can free tmp
+	end
+	return into
+end
+
+-- Product of a 4x4 matrix flattened in column-major order and a 3 element vector
+function array.matrix_product_mat4_vec3(a, v, into)
+	assert(#a==16)
+	assert(#v==3)
+	local x, y, z =
+		a[1]*v[1] + a[5]*v[2] + a[9]*v[3] + a[13],
+		a[2]*v[1] + a[6]*v[2] + a[10]*v[3] + a[14],
+		a[3]*v[1] + a[7]*v[2] + a[11]*v[3] + a[15]
+	if into then
+		return array.pack(into, x, y, z)
+	else
+		return table.pack(x,y,z)
+	end
+end
+
 -----------------------------------------------------------
 -- unit tests
 -- TODO: provide better way to do in-file unit tests
@@ -240,6 +298,16 @@ function array.unit_tests()
 		assert(array.length_squared(array.add(x_axis,y_axis))==2)
 		assert(array.inner_product(x_axis,x_axis)==1)
 		assert(array.inner_product(x_axis,y_axis)==0)
+
+		local ident = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}
+		math.randomseed(0)
+		local random_unit = function() return math.random() end
+		local random_mat4 = array.generate(16, random_unit)
+		local result = array.matrix_product(ident, random_mat4)
+		assert(array.almost_equals(result, random_mat4))
+		local random_vec3 = array.generate(3, random_unit)
+		assert(array.almost_equals(random_vec3, array.matrix_product(ident, random_vec3)))
+
 	end
 
 	print("array tests passed")

@@ -62,7 +62,7 @@ end
 
 --assert a value is of a certain type
 function assert:type(a, t, msg, stack_level)
-	if (a.type and a:type() ~= t) or (not a.type and type(a) ~= t) then
+	if (a==nil and type(a) ~=t ) or (a.type and a:type() ~= t) or (not a.type and type(a) ~= t) then
 		error(("assertion failed: %s (%s) not of type %s %s"):format(
 			tostring(a),
 			type(a),
